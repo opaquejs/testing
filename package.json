@@ -9,7 +9,9 @@
   "dependencies": {
     "reflect-metadata": "^0.1.13"
   },
-  "scripts": {},
+  "scripts": {
+    "build": "tsc"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/opaquejs/testing.git"
