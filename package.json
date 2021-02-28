@@ -7,6 +7,7 @@
     "/lib"
   ],
   "dependencies": {
+    "@types/jest": "^26.0.20",
     "reflect-metadata": "^0.1.13"
   },
   "scripts": {
@@ -27,5 +28,8 @@
   "bugs": {
     "url": "https://github.com/opaquejs/testing/issues"
   },
-  "homepage": "https://github.com/opaquejs/testing#readme"
+  "homepage": "https://github.com/opaquejs/testing#readme",
+  "devDependencies": {
+    "typescript": "^4.2.2"
+  }
 }
