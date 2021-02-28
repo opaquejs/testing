@@ -1,6 +1,6 @@
 {
   "name": "@opaquejs/testing",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Test Suite used by Opaque ORM",
   "main": "lib/index.js",
   "files": [
