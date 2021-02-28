@@ -1,0 +1,29 @@
+{
+  "name": "@opaquejs/testing",
+  "version": "0.1.0",
+  "description": "Test Suite used by Opaque ORM",
+  "main": "lib/index.js",
+  "files": [
+    "/lib"
+  ],
+  "dependencies": {
+    "reflect-metadata": "^0.1.13"
+  },
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/opaquejs/testing.git"
+  },
+  "keywords": [
+    "opaquejs",
+    "orm",
+    "api",
+    "testing"
+  ],
+  "author": "Sebastian Dittrich",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/opaquejs/testing/issues"
+  },
+  "homepage": "https://github.com/opaquejs/testing#readme"
+}
