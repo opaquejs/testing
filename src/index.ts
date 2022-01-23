@@ -1,154 +1,159 @@
 import "reflect-metadata";
 
-export interface Test {
-  constructor: any;
-  examples?: ExamplesRecord;
-  injects?: InjectsRecord;
-  ignore?: IgnoreMethodList;
-  afterEach?: string[];
-  beforeEach?: string[];
+export interface ArgumentResolver {
+  (context: { key: string; index: number; instance: TestInterface }): unknown;
 }
-
-export type BeforeHookContext = {
-  key: string;
-  example: ExampleSet;
-};
-export type AfterHookContext = BeforeHookContext & {
-  result: unknown;
-};
-
-export type Inject = any;
-export type Injects = Inject[];
-export type InjectsRecord = { [key: string]: Injects };
-
-export type IgnoreMethodList = string[];
+export interface Hook {
+  (context: { instance: TestInterface }): Promise<unknown>;
+}
 
 export class ExampleClass {}
 export type Example<T> = T;
 export const Example = ExampleClass;
-export type ExampleSet = Example<any>[];
-export type ExampleSets = ExampleSet[];
-export type ExamplesRecord = Record<string, ExampleSets>;
 
-export type TestRunner = (example: ExampleSet) => Promise<any>;
+export interface TestInterface {
+  constructor: any;
+  _providers?: Map<unknown, ArgumentResolver>;
+  _arguments?: Map<string, (ArgumentResolver | undefined)[]>;
+  _ignore?: Set<string>;
+  _afterEach?: Set<Hook>;
+  _beforeEach?: Set<Hook>;
+  _examples?: Map<
+    string,
+    { lastParameterIndex: number; currentExampleIndex: number; currentExample: number; examples: unknown[][] }
+  >;
+}
 
-export type TestConfig = {
-  name: string;
-  examples?: ExampleSets;
-  runner: TestRunner;
-};
+export const provide =
+  (key: unknown, value: ArgumentResolver) =>
+  (test: new () => TestInterface): void => {
+    if (!test.prototype._providers) test.prototype._providers = new Map();
+    test.prototype._providers.set(key, value);
+  };
+export const inject =
+  (provider?: unknown) =>
+  (test: TestInterface, key: string, index: number): void => {
+    if (!provider) {
+      const argTypes = Reflect.getMetadata("design:paramtypes", test, key);
+      provider = argTypes[index];
+    }
+    if (!test._arguments) test._arguments = new Map();
+    if (!test._arguments.has(key)) test._arguments.set(key, []);
+    test._arguments.get(key)![index] = (context) => test._providers?.get(provider)?.(context);
+  };
 
-export const parseTestInstance = <T extends Test>(test: T): TestConfig[] => {
-  const runners: TestConfig[] = [];
-  for (const key in test) {
-    if (typeof test[key] == "function" && !key.startsWith("_") && !test.ignore?.includes(key)) {
-      runners.push({
-        name: key,
-        examples: test.examples?.[key],
-        runner: async (example) => {
-          const args: any[] = [];
-          let exampleIndex = 0;
-          for (const index in test.injects?.[key] || []) {
-            const inject = test.injects?.[key][index];
-            args[index] = inject === ExampleClass ? example[exampleIndex++] : inject;
-          }
-          for (const beforeHook of test.beforeEach || []) {
-            (test as any)[beforeHook]({
-              key,
-              example,
-            } as BeforeHookContext);
-          }
-          const result = await (test as any)[key](...args);
-          for (const afterHook of test.afterEach || []) {
-            (test as any)[afterHook]({
-              key,
-              result,
-              example,
-            } as AfterHookContext);
-          }
-          return result;
-        },
+export const exampleProvider = provide(Example, ({ instance, key, index }) => {
+  const example = instance._examples?.get(key);
+  if (!example) return undefined;
+  if (example.lastParameterIndex >= index) {
+    example.currentExample++;
+    example.currentExampleIndex = 0;
+  }
+  example.lastParameterIndex = index;
+  const result = example.examples[example.currentExample][example.currentExampleIndex];
+  example.currentExampleIndex++;
+  return result;
+});
+
+export const example =
+  (...args: unknown[]) =>
+  (test: TestInterface, key: string): void => {
+    if (!test._examples) test._examples = new Map();
+    if (!test._examples.has(key))
+      test._examples.set(key, {
+        currentExample: 0,
+        lastParameterIndex: -1,
+        currentExampleIndex: 0,
+        examples: [],
       });
+    test._examples.get(key)!.examples.push(args);
+    if (!test._providers?.has("example")) exampleProvider(test.constructor);
+  };
+
+export const examples =
+  (...args: unknown[][]) =>
+  (test: TestInterface, key: string): void => {
+    for (const e of args) {
+      example(...e)(test, key);
+    }
+  };
+
+export const makeRunners = <T extends TestInterface>(test: T) => {
+  const runners = [];
+  for (const key in test) {
+    if (typeof test[key] == "function" && !key.startsWith("_") && !test._ignore?.has(key)) {
+      const examples = test._examples?.get(key)?.examples;
+      const noExamples = {};
+      for (const example of examples || [noExamples]) {
+        runners.push({
+          name: example === noExamples ? key : `${key} with example ${example}`,
+          runner: async () => {
+            const args =
+              test._arguments?.get(key)?.map((argresolver, index) => argresolver?.({ key, index, instance: test })) ||
+              [];
+            for (const callback of test._beforeEach || new Set()) {
+              await callback({ instance: test });
+            }
+            await (test[key] as unknown as Function).call(test, ...args);
+            for (const callback of test._afterEach || new Set()) {
+              await callback({ instance: test });
+            }
+          },
+        });
+      }
     }
   }
   return runners;
 };
 
-export const runTest = (config: TestConfig) => {
-  if (config.examples) {
-    for (const example of config.examples) {
-      test(`${config.name} with example ${example}`, async () => {
-        await config.runner(example);
-      });
+export const afterEach = () => (test: TestInterface, methodName: string) => {
+  if (!test._afterEach) {
+    test._afterEach = new Set();
+  }
+  test._afterEach.add((context) => (context.instance as any)[methodName](context));
+};
+export const beforeEach = () => (test: TestInterface, methodName: string) => {
+  if (!test._beforeEach) {
+    test._beforeEach = new Set();
+  }
+  test._beforeEach.add((context) => (context.instance as any)[methodName](context));
+};
+export const ignore = () => (test: TestInterface, methodName: string) => {
+  if (!test._ignore) {
+    test._ignore = new Set();
+  }
+  test._ignore.add(methodName);
+};
+
+export const runPlain = () => (testClass: new () => TestInterface) => {
+  Promise.resolve().then(async () => {
+    for (const test of makeRunners(new testClass())) {
+      await test.runner();
     }
-  } else {
-    test(config.name, async () => {
-      await config.runner([]);
-    });
-  }
+  });
 };
 
-export const runAsTest = () => (testClass: new () => Test) => {
-  for (const test of parseTestInstance(new testClass())) {
-    runTest(test);
-  }
-};
+// @runPlain()
+// @provide("hahastring", () => "hahaprovidden")
+// class Test {
+//   @example("myexample 1 1", "myexample 1 2")
+//   @example("myexample 2 1", "myexample 2 2")
+//   test(@inject("hahastring") string: string, @inject() example: Example<string>, @inject() example2: Example<number>) {
+//     console.log("logging", string, example, example2);
+//   }
 
-export const inject = (value: any) => <T extends Test>(test: T, key: string, index: number): void => {
-  if (!test.injects) {
-    test.injects = {};
-  }
-  if (!test.injects[key]) {
-    test.injects[key] = [];
-  }
-  test.injects[key][index] = value;
-};
+//   @example("myexample 1 1", "othermyexample 1 2")
+//   @example("othermyexample 2 1", "myexample 2 2")
+//   otherTest(@inject() example: Example<string>, @inject() example2: Example<number>) {
+//     console.log("logging", example, example2);
+//   }
 
-export function autoinject(types?: any[]) {
-  function handler(test: Test, key: string, index?: number | PropertyDescriptor) {
-    const args = Reflect.getMetadata("design:paramtypes", test, key);
-    if (Number.isInteger(index)) {
-      const arg = args[index as number];
-      if (Array.isArray(types) && !types.includes(arg)) {
-        return;
-      }
-      inject(arg)(test, key, index as number);
-    } else {
-      for (const [index] of args.entries()) {
-        handler(test, key, index);
-      }
-    }
-  }
-  return handler;
-}
-
-export const example = (...example: ExampleSet) => <T extends Test>(test: T, key: string): void => {
-  if (!test.examples) {
-    test.examples = {};
-  }
-  if (!test.examples[key]) {
-    test.examples[key] = [];
-  }
-  test.examples[key].push(example);
-  autoinject([ExampleClass])(test, key);
-};
-
-export const examples = (...examples: ExampleSets) => <T extends Test>(test: T, key: string): void => {
-  for (const e of examples) {
-    example(...e)(test, key);
-  }
-};
-
-export const afterEach = () => (test: Test, methodName: string) => {
-  if (!test.afterEach) {
-    test.afterEach = [];
-  }
-  test.afterEach.push(methodName);
-};
-
-export const ignore = () => (test: Test, methodName: string) => {
-  if (!test.ignore) {
-    test.ignore = [];
-  }
-  test.ignore.push(methodName);
-};
+//   @beforeEach()
+//   _prepare() {
+//     console.log("prepare");
+//   }
+//   @afterEach()
+//   _cleanUp() {
+//     console.log("cleanup");
+//   }
+// }
